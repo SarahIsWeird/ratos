@@ -1,0 +1,4 @@
+*.bin
+*.iso
+build/
+edk2-ovmf/

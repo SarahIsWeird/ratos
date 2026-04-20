@@ -1,0 +1,61 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/sbin/clang",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-clang-x64"
+        },
+        {
+            "name": "Limine",
+            "includePath": [
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/deps/limine-protocol/include",
+                "${workspaceFolder}/deps/flanterm/src",
+                "${workspaceFolder}/deps/nanoprintf"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/sbin/clang",
+            "cStandard": "c99",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-clang-x64",
+            "compilerArgs": [
+                "-Wall",
+                "-Wextra",
+                "-nostdinc",
+                "-ffreestanding",
+                "-fno-stack-protector",
+                "-fno-lto",
+                "-fno-PIC",
+                "-ffunction-sections",
+                "-fdata-sections",
+                "-target",
+                "x86_64-unknown-none-elf",
+                "-m64",
+                "-march=x86-64",
+                "-mabi=sysv",
+                "-mno-80387",
+                "-mno-mmx",
+                "-mno-sse",
+                "-mno-sse2",
+                "-mno-red-zone",
+                "-mcmodel=kernel",
+                "-isystem",
+                "deps/freestanding-c-headers/include",
+                "-MMD",
+                "-MP"
+            ],
+            "mergeConfigurations": false,
+            "recursiveIncludes": {},
+            "browse": {
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}

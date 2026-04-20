@@ -1,0 +1,16 @@
+[submodule "deps/cc-runtime"]
+	path = deps/cc-runtime
+	url = https://github.com/osdev0/cc-runtime.git
+	branch = packed
+[submodule "deps/freestanding-c-headers"]
+	path = deps/freestanding-c-headers
+	url = https://github.com/osdev0/freestnd-c-hdrs-0bsd.git
+[submodule "deps/limine-protocol"]
+	path = deps/limine-protocol
+	url = https://github.com/Limine-Bootloader/limine-protocol.git
+[submodule "deps/flanterm"]
+	path = deps/flanterm
+	url = https://github.com/Mintsuki/Flanterm
+[submodule "deps/nanoprintf"]
+	path = deps/nanoprintf
+	url = https://github.com/charlesnicholson/nanoprintf

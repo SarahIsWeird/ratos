@@ -1,0 +1,9 @@
+{
+    "C_Cpp.default.compilerPath": "",
+    "C_Cpp.files.exclude": {
+        "deps/limine": true,
+        "**/.vscode": true,
+        "**/.vs": true
+    },
+    "nasm.outputFormat": "elf64"
+}
