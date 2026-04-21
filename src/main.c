@@ -84,6 +84,10 @@ void kmain(void) {
 
     virt_init(memmap_request.response, hhdm_request.response->offset);
 
+    uint64_t *foo = (uint64_t *) virt_alloc(NULL, 0x10000, VF_WRITABLE);
+    *foo = 0xdeadbeefcafefe00;
+    kdebug("*%llp=%llp\n", foo, *foo);
+
     while (1);
 
     hlt();

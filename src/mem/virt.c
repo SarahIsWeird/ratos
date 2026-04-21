@@ -50,7 +50,7 @@ static uint64_t *s_get_struct_entry(uint64_t *pstruct, uint64_t index, bool crea
         hcf();
     }
 
-    pstruct[index] = phy_addr | flags;
+    pstruct[index] = phy_addr | flags | VF_PRESENT;
     return (uint64_t *) phys_to_virt(phy_addr);
 }
 
@@ -70,29 +70,24 @@ static uint64_t *s_get_pte(virt_ctx_t *ctx, uint64_t addr, bool create_structure
 
     uint64_t *pml4 = top_level;
     uint64_t *pml4e = s_get_struct_entry(pml4, (addr >> PM4_OFFSET) & INDEX_MASK, create_structures, flags);
-    kdebug("pml4: %0p, pml4e: %0p, index: %llu\n", pml4, pml4e, (addr >> PM4_OFFSET) & INDEX_MASK);
     if (pml4e == NULL) return NULL;
 
     uint64_t *pdpt = s_entry_to_pointer(pml4e);
     uint64_t *pdpte = s_get_struct_entry(pdpt, (addr >> PDPT_OFFSET) & INDEX_MASK, create_structures, flags);
-    kdebug("pdpt: %0p, pdpte: %0p, index: %llu\n", pdpt, pdpte, (addr >> PDPT_OFFSET) & INDEX_MASK);
     if (pdpte == NULL) return NULL;
 
     uint64_t *pd = s_entry_to_pointer(pdpte);
     uint64_t *pde = s_get_struct_entry(pd, (addr >> PD_OFFSET) & INDEX_MASK, create_structures, flags);
-    kdebug("pd: %0p, pde: %0p, index: %llu\n", pd, pde, (addr >> PD_OFFSET) & INDEX_MASK);
     if (pde == NULL) return NULL;
 
     uint64_t *pt = s_entry_to_pointer(pde);
     uint64_t *pte = s_get_struct_entry(pt, (addr >> PT_OFFSET) & INDEX_MASK, create_structures, flags);
-    kdebug("pt: %0p, pte: %0p, index: %llu\n", pt, pte, (addr >> PT_OFFSET) & INDEX_MASK);
     return pte;
 }
 
 static uint64_t s_find_virt_region(virt_ctx_t *ctx, uint64_t start, uint64_t end, uint64_t length) {
     length = VIRT_ROUND_UP(length);
 
-    uint64_t start = start;
     while (start < end) {
 while_cont:
         for (size_t i = 0; i < length; i += VIRT_PAGE_SIZE) {
@@ -156,7 +151,7 @@ uint64_t virt_alloc(virt_ctx_t *ctx, size_t length, virt_flags_t flags) {
 }
 
 uint64_t virt_user_alloc(virt_ctx_t *ctx, size_t length, virt_flags_t flags) {
-
+    return 0;
 }
 
 void virt_free(virt_ctx_t *ctx, uint64_t addr) {
@@ -164,5 +159,12 @@ void virt_free(virt_ctx_t *ctx, uint64_t addr) {
 }
 
 void virt_map(virt_ctx_t *ctx, uint64_t phys, uint64_t virt, size_t length, virt_flags_t flags) {
+    for (size_t i = 0; i < PHYS_ROUND_UP(length); i += VIRT_PAGE_SIZE) {
+        uint64_t *pte = s_get_pte(ctx, virt + i, true, flags);
+        if (!pte) return;
 
+        *pte = (PHYS_ROUND_DOWN(phys) + i) | flags;
+        uint64_t page = virt + i;
+        __asm__ volatile("invlpg %0" :: "m" (page) : "memory");
+    }
 }

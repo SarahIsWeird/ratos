@@ -98,6 +98,9 @@ static void s_print_regs(state_t *state) {
     kerror("rdi: %0p, rsi: %0p, rsp: %0p, rbp: %0p,\n", state->rdi, state->rsi, state->rsp, state->rbp);
     kerror("rip: %0p,    cs: 0x%02x, ss: 0x%02x,\n", state->rip, state->cs, state->ss);
     kerror("rflags: %0p\n", state->rflags);
+    uint64_t cr0;
+    __asm__ ("mov %%cr0, %0" : "=r" (cr0));
+    kerror("cr0: %0p\n", cr0);
 }
 
 void idt_init(void) {

@@ -27,7 +27,7 @@ LDFLAGS := \
 	-m elf_x86_64 -T linker.ld \
 	-nostdlib -static -z max-page-size=0x1000 
 
-QEMU_FLAGS := -m 2G --no-reboot --no-shutdown -serial stdio
+QEMU_FLAGS := -m 2G --no-reboot --no-shutdown -serial stdio -device VGA,xres=800,yres=600
 
 OUTPUT_BIN := $(OUTPUT).bin
 OUTPUT_ISO := $(OUTPUT).iso
@@ -79,7 +79,7 @@ deps/limine/limine:
 		LIBS="$(HOST_LIBS)"
 
 edk2-ovmf:
-	curl --skip-existing --location https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz | gunzip | tar -xf -
+	curl --location https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz | gunzip | tar -xf -
 
 run: edk2-ovmf $(OUTPUT_ISO)
 	qemu-system-x86_64 \
