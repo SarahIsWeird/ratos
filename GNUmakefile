@@ -18,16 +18,16 @@ NASMFLAGS := \
 	-g -F dwarf -f elf64
 CFLAGS := \
 	-Wall -Wextra -std=c99 -g -O0 \
-	-nostdinc -ffreestanding -fno-stack-protector -fno-lto -fno-PIC \
+	-nostdinc -ffreestanding -fno-stack-protector -fno-lto -fno-PIC -fno-omit-frame-pointer \
 	-target x86_64-unknown-none-elf -m64 -march=x86-64 -mabi=sysv -mno-80387 -mno-mmx -mno-sse -mno-sse2 -mno-red-zone -mcmodel=kernel \
 	-I src $(DEPS_INCLUDES) -MMD -MP \
     -ffunction-sections \
     -fdata-sections
 LDFLAGS := \
 	-m elf_x86_64 -T linker.ld \
-	-nostdlib -static -z max-page-size=0x1000 
+	-nostdlib -static -z max-page-size=0x1000
 
-QEMU_FLAGS := -m 2G --no-reboot --no-shutdown -serial stdio -device VGA,xres=800,yres=600
+QEMU_FLAGS := -m 2G --no-reboot --no-shutdown -serial stdio -device VGA,xres=1280,yres=720
 
 OUTPUT_BIN := $(OUTPUT).bin
 OUTPUT_ISO := $(OUTPUT).iso
@@ -53,11 +53,13 @@ $(ASMOBJ): build/%.asm.o: %.asm
 $(OUTPUT_BIN): $(COBJ) $(ASMOBJ) linker.ld
 	$(LD) -o "$@" $(COBJ) $(ASMOBJ) $(LDFLAGS)
 
-$(OUTPUT_ISO): $(OUTPUT_BIN) deps/limine/limine limine.conf
+$(OUTPUT_ISO): $(OUTPUT_BIN) deps/limine/limine limine.conf rats_processed.map
 	rm -rf build/iso
 	mkdir -p build/iso/boot/limine
+	mkdir -p build/iso/boot/rats
 	mkdir -p build/iso/EFI/BOOT
 	cp $(OUTPUT_BIN) build/iso/boot/
+	cp rats_processed.map build/iso/boot/rats/symbols.map
 	cp limine.conf build/iso/boot/limine
 	cp deps/limine/limine-bios.sys deps/limine/limine-bios-cd.bin deps/limine/limine-uefi-cd.bin build/iso/boot/limine/
 	cp deps/limine/BOOTX64.EFI deps/limine/BOOTIA32.EFI build/iso/EFI/BOOT
@@ -67,6 +69,20 @@ $(OUTPUT_ISO): $(OUTPUT_BIN) deps/limine/limine limine.conf
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		build/iso -o $(OUTPUT_ISO)
 	./deps/limine/limine bios-install $(OUTPUT_ISO)
+
+.PHONY: rats_processed.map
+rats_processed.map: $(OUTPUT_BIN)
+	nm $(OUTPUT_BIN) \
+			--numeric-sort \
+		| sed -E \
+			-e "s,$(shell pwd)/,,g" \
+			-e 's,[^ ]*?//(.*)$$,\1,' \
+			-e 's/rats.bin://g' \
+			-e 's/[ \t]+/ /g' \
+			-e '/[tT] [a-zA-Z0-9_]+\..+$$/d' \
+			-e '/^[a-zA-Z0-9]+ [^tT] /d' \
+			-e 's/ [tT] / /g' \
+			> rats_processed.map
 
 deps/limine/limine:
 	rm -rf deps/limine/

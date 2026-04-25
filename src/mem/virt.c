@@ -1,170 +1,256 @@
 #include "virt.h"
 
-#include <stdbool.h>
-
-#include "cpuid.h"
+#include "debug/stacktrace.h"
 #include "drv/term.h"
-#include "phys.h"
+#include "limine_data.h"
+#include "mem/phys.h"
+#include "string.h"
 #include "util.h"
-
-#define LIN_MASK   0xfff
-#define PT_OFFSET 12
-#define PD_OFFSET 21
-#define PDPT_OFFSET 30
-#define PM4_OFFSET 39
-#define PM5_OFFSET 48
-#define INDEX_MASK 0x1ff
-
-#define PHYS_MASK ((uint64_t) 0x7ffffffffffffc00)
 
 struct virt_ctx_t {
     uint64_t phys;
-    uint64_t virt;
+    uint64_t *virt;
 };
 
-static uint64_t s_hhdm_offset = 0;
-static unsigned int s_max_phy_addr = 0;
-static uint64_t s_phy_mask = 0;
+static uint64_t s_virt_hhdm_offset;
+static uint64_t s_kernel_pdpt_virt;
 
-static uint64_t boobies = 0xcafebabedeadbeef;
+extern uint64_t kernel_start;
+extern uint64_t kernel_end;
 
-static uint64_t s_sanitize_page_structure_flags(virt_flags_t flags, bool is_user_struct) {
-    // TODO: take into account if it's in the user address space and add the user flag
-    // if the PDE (or PDPTE or PML4E or PML5E) doesn't have the user flag set it no worky then
-    return flags;
+static inline uint64_t s_phys_to_virt(uint64_t addr) {
+    return addr + s_virt_hhdm_offset;
 }
 
-static uint64_t *s_get_struct_entry(uint64_t *pstruct, uint64_t index, bool create_structure, virt_flags_t flags) {
-    uint64_t entry = pstruct[index];
-    if (entry != 0) return &pstruct[index];
-    if (!create_structure) return NULL;
-
-    uint64_t phy_addr = phys_alloc();
-    if (phy_addr == NULL) {
-        kerror("Out of memory while trying to allocate space for a paging structure!\n");
-        hcf();
-    }
-
-    if (phy_addr != (s_phy_mask & phy_addr)) {
-        kerror("Tried to allocate physical memory for a paging structure at %0p, but it doesn't fit into the physical address space! (mask %0p)\n", phy_addr, s_phy_mask);
-        hcf();
-    }
-
-    pstruct[index] = phy_addr | flags | VF_PRESENT;
-    return (uint64_t *) phys_to_virt(phy_addr);
+static inline uint64_t s_virt_to_phys(uint64_t addr) {
+    return addr - s_virt_hhdm_offset;
 }
 
-static uint64_t *s_entry_to_pointer(uint64_t *entry_ptr) {
-    return (uint64_t *) phys_to_virt(*entry_ptr & PHYS_MASK);
+static uint64_t *s_virt_get_top_level(virt_ctx_t *ctx) {
+    if (ctx != NULL) return ctx->virt;
+
+    uint64_t cr3;
+    __asm__ ("mov %%cr3, %0" : "=r" (cr3));
+    return (uint64_t *) s_phys_to_virt(cr3);
 }
 
-static uint64_t *s_get_pte(virt_ctx_t *ctx, uint64_t addr, bool create_structures, virt_flags_t flags) {
-    uint64_t *top_level;
-    if (ctx == NULL) {
-        uint64_t cr3;
-        __asm__ ("mov %%cr3, %0" : "=r" (cr3));
-        top_level = (uint64_t *) phys_to_virt(cr3);
-    } else {
-        top_level = (uint64_t *) ctx->virt;
-    }
-
-    uint64_t *pml4 = top_level;
-    uint64_t *pml4e = s_get_struct_entry(pml4, (addr >> PM4_OFFSET) & INDEX_MASK, create_structures, flags);
-    if (pml4e == NULL) return NULL;
-
-    uint64_t *pdpt = s_entry_to_pointer(pml4e);
-    uint64_t *pdpte = s_get_struct_entry(pdpt, (addr >> PDPT_OFFSET) & INDEX_MASK, create_structures, flags);
-    if (pdpte == NULL) return NULL;
-
-    uint64_t *pd = s_entry_to_pointer(pdpte);
-    uint64_t *pde = s_get_struct_entry(pd, (addr >> PD_OFFSET) & INDEX_MASK, create_structures, flags);
-    if (pde == NULL) return NULL;
-
-    uint64_t *pt = s_entry_to_pointer(pde);
-    uint64_t *pte = s_get_struct_entry(pt, (addr >> PT_OFFSET) & INDEX_MASK, create_structures, flags);
-    return pte;
+static uint64_t *s_virt_entry_ptr_to_table_ptr(uint64_t *entry) {
+    uint64_t table_phys = *entry & 0x001ffffffffff000ull;
+    return (uint64_t *) s_phys_to_virt(table_phys);
 }
 
-static uint64_t s_find_virt_region(virt_ctx_t *ctx, uint64_t start, uint64_t end, uint64_t length) {
-    length = VIRT_ROUND_UP(length);
+static uint64_t *s_virt_get_entry_ptr(uint64_t *table, uint64_t index, bool create_if_missing, uint64_t flags) {
+    uint64_t entry = table[index];
+    if (entry == 0) {
+        if (!create_if_missing) return NULL;
 
-    while (start < end) {
-while_cont:
-        for (size_t i = 0; i < length; i += VIRT_PAGE_SIZE) {
-            if (s_get_pte(ctx, start + i, false, 0)) {
-                start += i + VIRT_PAGE_SIZE;
-                goto while_cont;
-            }
+        uint64_t phys = phys_alloc();
+        if (phys == 0) {
+            print_stacktrace();
+            kerror("Failed to allocate a paging structure!\n");
+            hcf();
         }
 
-        return start;
+        memset((void *) s_phys_to_virt(phys), 0, VIRT_PAGE_SIZE);
+        table[index] = phys | flags | VF_PD_PRESENT;
     }
 
-    return 0;
+    return &table[index];
 }
 
-uint64_t phys_to_virt(uint64_t phys) {
-    return (phys + s_hhdm_offset);
+static uint64_t *s_virt_get_pte(virt_ctx_t *ctx, uint64_t addr, bool is_big_page) {
+    uint64_t *pml4 = s_virt_get_top_level(ctx);
+    uint64_t *pml4e = s_virt_get_entry_ptr(pml4, (addr >> VIRT_PML4_INDEX_OFFSET) & VIRT_INDEX_MASK, false, 0);
+    if (!pml4e) return NULL;
+
+    uint64_t *pdpt = s_virt_entry_ptr_to_table_ptr(pml4e);
+    uint64_t *pdpte = s_virt_get_entry_ptr(pdpt, (addr >> VIRT_PDPT_INDEX_OFFSET) & VIRT_INDEX_MASK, false, 0);
+    if (!pdpte) return NULL;
+
+    uint64_t *pd = s_virt_entry_ptr_to_table_ptr(pdpte);
+    uint64_t *pde = s_virt_get_entry_ptr(pd, (addr >> VIRT_PD_INDEX_OFFSET) & VIRT_INDEX_MASK, false, 0);
+    if (!pde) return NULL;
+
+    if (is_big_page) return pde;
+    if (*pde & VF_PD_BIG_PAGE) return pde;
+
+    uint64_t *pt = s_virt_entry_ptr_to_table_ptr(pde);
+    return &pt[(addr >> VIRT_PT_INDEX_OFFSET) & VIRT_INDEX_MASK];
 }
 
-void virt_init(struct limine_memmap_response *memmap_response, uint64_t hhdm_offset) {
-    s_hhdm_offset = hhdm_offset;
+static uint64_t *s_virt_get_or_create_pte(virt_ctx_t *ctx, uint64_t addr, bool is_user, bool is_big_page) {
+    uint64_t flags = (is_user ? VF_PD_USER : 0) | VF_PD_PRESENT;
 
-    uint32_t asr = cpuid_eax(CPUID_ADDRESS_SPACE_INFO, 0);
-    s_max_phy_addr = (asr >> CPUID_ASI_EAX_PHYS_ADDR_SIZE_OFFSET) & CPUID_ASI_EAX_PHYS_ADDR_SIZE_MASK;
-    uint32_t linear_addr_size = (asr >> CPUID_ASI_EAX_LIN_ADDR_SIZE_OFFSET) & CPUID_ASI_EAX_LIN_ADDR_SIZE_MASK;
-    kdebug("Physical address size: %u bits, linear address size: %u bits\n", s_max_phy_addr, linear_addr_size);
+    uint64_t *pml4 = s_virt_get_top_level(ctx);
+    uint64_t *pml4e = s_virt_get_entry_ptr(pml4, (addr >> VIRT_PML4_INDEX_OFFSET) & VIRT_INDEX_MASK, true, flags | VF_PD_WRITABLE);
+    if (!pml4e) return NULL;
 
-    s_phy_mask = get_bitmask64(12, s_max_phy_addr - 1);
+    uint64_t *pdpt = s_virt_entry_ptr_to_table_ptr(pml4e);
+    uint64_t *pdpte = s_virt_get_entry_ptr(pdpt, (addr >> VIRT_PDPT_INDEX_OFFSET) & VIRT_INDEX_MASK, true, flags | VF_PD_WRITABLE);
+    if (!pdpte) return NULL;
 
-    uint64_t *curr_virt = &boobies;
-    kinfo("boobies: %0p\n", curr_virt);
-    uint64_t *pte_entry = s_get_pte(NULL, (uint64_t) curr_virt, false, 0);
-    kinfo("pte entry: %0p\n", pte_entry);
-    uint64_t *phys = s_entry_to_pointer(pte_entry);
-    kinfo("phys addr: %0p\n", phys);
-    uint64_t offset = (uint64_t) curr_virt & INDEX_MASK;
-    uint64_t virt = (uint64_t) phys + offset;
-    kinfo("addr: %0p, value: %0p\n", virt, *(uint64_t *) virt);
+    uint64_t *pd = s_virt_entry_ptr_to_table_ptr(pdpte);
+    uint64_t *pde = s_virt_get_entry_ptr(pd, (addr >> VIRT_PD_INDEX_OFFSET) & VIRT_INDEX_MASK, true, flags | VF_PD_WRITABLE);
+    if (!pde) return NULL;
+
+    if (is_big_page) return pde;
+    if (*pde & VF_PD_BIG_PAGE) return pde;
+
+    uint64_t *pt = s_virt_entry_ptr_to_table_ptr(pde);
+    return &pt[(addr >> VIRT_PT_INDEX_OFFSET) & VIRT_INDEX_MASK];
 }
 
-virt_ctx_t *virt_new(void) {
-    virt_ctx_t *ctx = (virt_ctx_t *) virt_alloc(NULL, sizeof(virt_ctx_t), 0);
+static bool s_virt_is_address_mapped(virt_ctx_t *ctx, uint64_t addr) {
+    uint64_t *entry = s_virt_get_pte(ctx, addr, false);
+    if (entry == NULL) return false;
+    return *entry == 0;
+}
+
+void virt_init(void) {
+    s_virt_hhdm_offset = limine_data_hhdm_get_offset();
+
+    uint64_t kernel_pdpt_phys = phys_alloc();
+    if (!kernel_pdpt_phys) {
+        kerror("Failed to allocate the kernel PDPT!\n");
+        hcf();
+    }
+
+    s_kernel_pdpt_virt = s_phys_to_virt(kernel_pdpt_phys);
+    virt_ctx_t *ctx = (virt_ctx_t *) s_phys_to_virt(phys_alloc());
+    ctx->phys = phys_alloc();
+    ctx->virt = (uint64_t *) s_phys_to_virt(ctx->phys);
+
+    kinfo("adding hhdm...\n");
+    struct limine_memmap_response *memmap = limine_data_get_memmap_response();
+    for (size_t i = 0; i < memmap->entry_count; i++) {
+        struct limine_memmap_entry *entry = memmap->entries[i];
+
+        switch (entry->type) {
+            case LIMINE_MEMMAP_USABLE:
+            case LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE:
+            case LIMINE_MEMMAP_EXECUTABLE_AND_MODULES:
+            case LIMINE_MEMMAP_RESERVED_MAPPED:
+            case LIMINE_MEMMAP_ACPI_RECLAIMABLE:
+            case LIMINE_MEMMAP_ACPI_NVS:
+                virt_map(ctx, entry->base, entry->base + s_virt_hhdm_offset, ceilchunku64(entry->length, VIRT_PAGE_SIZE), VF_PT_PRESENT | VF_PT_WRITABLE);
+                break;
+        }
+    }
+    struct limine_framebuffer *framebuffer = limine_data_get_framebuffer_response()->framebuffers[0];
+    virt_map(ctx, (uint64_t) framebuffer->address - s_virt_hhdm_offset, (uint64_t) framebuffer->address, framebuffer->width * framebuffer->height * framebuffer->bpp / BITS_PER_BYTE, VF_PT_PRESENT | VF_PT_WRITABLE);
+    kinfo("hhdm done\n");
+
+    kinfo("adding kernel map...\n");
+    struct limine_executable_address_response *executable_address = limine_data_get_executable_address_response();
+    virt_map(ctx, executable_address->physical_base, executable_address->virtual_base, (uint64_t) &kernel_end - (uint64_t) &kernel_start, VF_PT_PRESENT | VF_PT_WRITABLE);
+    kinfo("kernel map done\n");
+
+    virt_ctx_use(ctx);
+}
+
+virt_ctx_t *virt_ctx_new(void) {
+    virt_ctx_t *ctx = (virt_ctx_t *) virt_alloc(NULL, VIRT_PAGE_SIZE);
+    ctx->phys = phys_alloc();
+    if (!ctx->phys) {
+        kerror("Failed to allocate the PML4!\n");
+        hcf();
+    }
+
+    ctx->virt = (uint64_t *) s_phys_to_virt(ctx->phys);
+    ctx->virt[VIRT_ENTRIES_PER_STRUCT - 1] = s_virt_to_phys(s_kernel_pdpt_virt) | VF_PD_WRITABLE | VF_PD_PRESENT;
+
     return ctx;
 }
 
-void virt_use(virt_ctx_t *ctx) {
-    __asm__ volatile("mov %0, %%cr3" :: "r" (ctx->phys) : "memory");
+void virt_ctx_use(virt_ctx_t *ctx) {
+    uint64_t phys = ctx->phys;
+    __asm__ volatile("mov %0, %%cr3" :: "r" (phys) : "memory");
 }
 
-uint64_t virt_alloc(virt_ctx_t *ctx, size_t length, virt_flags_t flags) {
-    uint64_t start = s_find_virt_region(ctx, s_hhdm_offset, 0xfffffffffffff000, length);
-    if (start == 0) return 0;
+uint64_t virt_alloc(virt_ctx_t *ctx, size_t size) {
+    for (size_t addr = s_virt_hhdm_offset + VIRT_PAGE_SIZE; addr < 0xffffffffffff0000ull; addr += VIRT_PAGE_SIZE) {
+        bool found = true;
+        for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
+            if (s_virt_is_address_mapped(ctx, addr + i)) {
+                found = false;
+                break;
+            }
+        }
 
-    for (uint64_t i = start; i < start + length; i += VIRT_PAGE_SIZE) {
-        uint64_t phys = phys_alloc();
-        if (phys == 0) return 0; // fixme: memleak when oom
-        virt_map(ctx, phys, i, VIRT_PAGE_SIZE, flags | VF_PRESENT);
+        if (found) {
+            for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
+                uint64_t phys = phys_alloc();
+                if (!phys) {
+                    kerror("Failed to allocate physical memory for a virt_alloc!\n");
+                    hcf();
+                }
+
+                virt_map(ctx, phys, addr + i, VIRT_PAGE_SIZE, VF_PT_PRESENT | VF_PT_WRITABLE);
+            }
+
+            return addr;
+        }
     }
 
-    return start;
-}
-
-uint64_t virt_user_alloc(virt_ctx_t *ctx, size_t length, virt_flags_t flags) {
     return 0;
 }
 
-void virt_free(virt_ctx_t *ctx, uint64_t addr) {
+uint64_t virt_user_alloc(virt_ctx_t *ctx, size_t size) {
+    for (size_t addr = 0x100000; addr < s_virt_hhdm_offset; addr += VIRT_PAGE_SIZE) {
+        bool found = true;
+        for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
+            if (s_virt_is_address_mapped(ctx, addr + i)) {
+                found = false;
+                break;
+            }
+        }
 
+        if (found) {
+            for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
+                uint64_t phys = phys_alloc();
+                if (!phys) {
+                    kerror("Failed to allocate physical memory for a virt_alloc!\n");
+                    hcf();
+                }
+
+                virt_map_user(ctx, phys, addr + i, VIRT_PAGE_SIZE, VF_PT_PRESENT | VF_PT_USER | VF_PT_WRITABLE);
+            }
+
+            return addr;
+        }
+    }
+
+    return 0;
 }
 
-void virt_map(virt_ctx_t *ctx, uint64_t phys, uint64_t virt, size_t length, virt_flags_t flags) {
-    for (size_t i = 0; i < PHYS_ROUND_UP(length); i += VIRT_PAGE_SIZE) {
-        uint64_t *pte = s_get_pte(ctx, virt + i, true, flags);
-        if (!pte) return;
+void virt_free(virt_ctx_t *ctx, uint64_t addr, size_t size) {
+}
 
-        *pte = (PHYS_ROUND_DOWN(phys) + i) | flags;
-        uint64_t page = virt + i;
-        __asm__ volatile("invlpg %0" :: "m" (page) : "memory");
+void virt_map(virt_ctx_t *ctx, uint64_t phys_addr, uint64_t virt_addr, size_t size, uint64_t flags) {
+    bool is_big_page = !!(flags & VF_PD_BIG_PAGE);
+    uint64_t step = is_big_page ? VIRT_PAGE_SIZE_BIG : VIRT_PAGE_SIZE;
+
+    for (size_t i = 0; i < size; i += step) {
+        uint64_t *entry = s_virt_get_or_create_pte(ctx, virt_addr + i, false, is_big_page);
+        *entry = (phys_addr + i) | flags;
+    }
+}
+
+void virt_map_user(virt_ctx_t *ctx, uint64_t phys_addr, uint64_t virt_addr, size_t size, uint64_t flags) {
+    bool is_big_page = !!(flags & VF_PD_BIG_PAGE);
+    uint64_t step = is_big_page ? VIRT_PAGE_SIZE_BIG : VIRT_PAGE_SIZE;
+
+    for (size_t i = 0; i < size; i += step) {
+        uint64_t *entry = s_virt_get_or_create_pte(ctx, virt_addr + i, true, is_big_page);
+        *entry = phys_addr | flags;
+    }
+}
+
+void virt_unmap(virt_ctx_t *ctx, uint64_t addr, size_t size) {
+    for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
+        uint64_t *entry = s_virt_get_pte(ctx, addr + i, false);
+        if (entry) {
+            *entry = 0;
+        }
     }
 }

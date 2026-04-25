@@ -53,6 +53,10 @@ idt_int_handler_%1:
     int_handler_snippet %1
 %endmacro
 
+%macro globalfunc 1
+global %1
+%endmacro
+
 section .data
 
 idt:
@@ -84,7 +88,7 @@ section .text
 
 extern idt_int_handler
 
-global idt_load
+globalfunc idt_load
 idt_load:
 %assign i 0
 %rep 256
@@ -93,7 +97,9 @@ idt_load:
 %endrep
     lidt [idt_descriptor]
     ret
+.end:
 
+globalfunc idt_common_handler
 idt_common_handler:
     push r15
     push r14
@@ -110,6 +116,8 @@ idt_common_handler:
     push rcx
     push rbx
     push rax
+
+    mov rbp, rsp
 
     mov  rdi, rsp
     call idt_int_handler
@@ -133,6 +141,7 @@ idt_common_handler:
 
     add rsp, 16 ; poop the interrupt number and the error code
     iret
+.end:
 
     int_handler_no_error  0
     int_handler_error     1

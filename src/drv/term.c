@@ -1,7 +1,5 @@
 #include "term.h"
 
-#include <stdarg.h>
-
 #define NANOPRINTF_USE_FIELD_WIDTH_FORMAT_SPECIFIERS 1
 #define NANOPRINTF_USE_PRECISION_FORMAT_SPECIFIERS 1
 #define NANOPRINTF_USE_FLOAT_FORMAT_SPECIFIERS 0
@@ -15,11 +13,14 @@
 #define NANOPRINTF_USE_VISIBILITY_STATIC 1
 #define NANOPRINTF_IMPLEMENTATION
 
+#include <stdarg.h>
+
 #include <nanoprintf.h>
 #include <flanterm.h>
 #include <flanterm_backends/fb.h>
 
 #include "drv/rs232.h"
+#include "limine_data.h"
 
 #define TEXT_BUFFER_SIZE 4096
 
@@ -33,7 +34,10 @@ static struct {
 
 static struct flanterm_context *s_term;
 
-void term_init(struct limine_framebuffer *fb, struct limine_flanterm_fb_init_params *flanterm_params) {
+void term_init() {
+    struct limine_framebuffer *fb = limine_data_get_framebuffer_response()->framebuffers[0];
+    struct limine_flanterm_fb_init_params *flanterm_params = limine_data_get_flanterm_fb_init_params_response()->entries[0];
+
     s_term = flanterm_fb_init(
         NULL, NULL,
         fb->address, fb->width, fb->height, fb->pitch,
@@ -81,7 +85,9 @@ size_t s_print_log_head(int log_level, const char *file, int line) {
     return kprintf("[%s%s%s%s%s] [%s:%3d] ", ANSI_SGR_FG_COLOR, LOG_COLORS[log_level], ANSI_SGR_END, LOG_LEVEL_NAMES[log_level], ANSI_SGR_FG_COLOR_RESET, file, line);
 }
 
-static void s_putchar(int wide_c, void *_ctx) {
+static void s_putchar(int wide_c, void *ctx) {
+    (void) ctx;
+
     char c = (char) wide_c;
     if (c == '\n') {
         flanterm_write(s_term, "\r", 1);

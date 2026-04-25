@@ -1,6 +1,7 @@
 #include "idt.h"
 
 #include "util.h"
+#include "debug/stacktrace.h"
 #include "drv/term.h"
 
 #define PIC1_ADDR 0x20
@@ -101,6 +102,8 @@ static void s_print_regs(state_t *state) {
     uint64_t cr0;
     __asm__ ("mov %%cr0, %0" : "=r" (cr0));
     kerror("cr0: %0p\n", cr0);
+
+    print_stacktrace();
 }
 
 void idt_init(void) {

@@ -7,7 +7,8 @@
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
-#define LIMINE_REQUEST __attribute__((used, section(".limine_requests"))) static volatile
+/* For readability c: */
+#define BITS_PER_BYTE 8
 
 static inline void hcf(void) {
     while (1) {
@@ -54,6 +55,22 @@ static inline uint16_t inw(uint16_t port) {
 static inline uint32_t ind(uint16_t port) {
     uint32_t result;
     __asm__ volatile ("ind %1, %0" : "=a" (result) : "Nd" (port));
+    return result;
+}
+
+static inline uint64_t ceilchunku64(uint64_t n, uint64_t chunk) {
+    uint64_t result = n / chunk * chunk;
+    if (n % chunk != 0) {
+        result += chunk;
+    }
+    return result;
+}
+
+static inline uint64_t ceildivu64(uint64_t n, uint64_t divisor) {
+    uint64_t result = n / divisor;
+    if (n % divisor != 0) {
+        result++;
+    }
     return result;
 }
 

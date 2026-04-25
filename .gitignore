@@ -1,4 +1,5 @@
 *.bin
 *.iso
+*.map
 build/
 edk2-ovmf/

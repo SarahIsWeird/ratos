@@ -11,7 +11,7 @@
 #define LL_WARN  0x02
 #define LL_ERROR 0x03
 
-void term_init(struct limine_framebuffer *fb, struct limine_flanterm_fb_init_params *flanterm_params);
+void term_init();
 
 size_t kvprintf(const char *fmt, va_list args);
 size_t kprintf(const char *fmt, ...);
