@@ -49,4 +49,8 @@ void virt_map(virt_ctx_t *ctx, uint64_t phys_addr, uint64_t virt_addr, size_t si
 void virt_map_user(virt_ctx_t *ctx, uint64_t phys_addr, uint64_t virt_addr, size_t size, uint64_t flags);
 void virt_unmap(virt_ctx_t *ctx, uint64_t addr, size_t size);
 
+uint64_t virt_map_anywhere(virt_ctx_t *ctx, uint64_t phys_addr, size_t size, uint64_t flags);
+
+uint64_t virt_get_physical_address(virt_ctx_t *ctx, uint64_t virt_addr);
+
 #endif /* VIRT_H */

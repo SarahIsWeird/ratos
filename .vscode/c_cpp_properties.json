@@ -17,9 +17,15 @@
                 "${workspaceFolder}/src",
                 "${workspaceFolder}/deps/limine-protocol/include",
                 "${workspaceFolder}/deps/flanterm/src",
-                "${workspaceFolder}/deps/nanoprintf"
+                "${workspaceFolder}/deps/nanoprintf",
+                "${workspaceFolder}/deps/uacpi/include",
+                "${workspaceFolder}/src/acpi/uacpi_overrides"
             ],
-            "defines": [],
+            "defines": [
+                "UACPI_BAREBONES_MODE",
+                "UACPI_FORMATTED_LOGGING",
+                "UACPI_OVERRIDE_CONFIG"
+            ],
             "compilerPath": "/usr/bin/clang",
             "cStandard": "c99",
             "cppStandard": "c++17",

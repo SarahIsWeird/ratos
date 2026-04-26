@@ -33,6 +33,18 @@ void *memchr(void *ptr, int ch, size_t count) {
     return NULL;
 }
 
+int memcmp(const void *a, const void *b, size_t n) {
+    unsigned char *a_byte = (unsigned char *) a;
+    unsigned char *b_byte = (unsigned char *) b;
+
+    for (size_t i = 0; i < n; i++) {
+        int diff = (int) a_byte[i] - (int) b_byte[i];
+        if (diff != 0) return diff;
+    }
+
+    return 0;
+}
+
 size_t strlen(const char *str) {
     size_t length = 0;
     while (*(str++)) {

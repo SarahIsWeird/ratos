@@ -10,7 +10,7 @@ HOST_CPPFLAGS :=
 HOST_LDFLAGS :=
 HOST_LIBS :=
 
-DEPS_PATHS := limine-protocol/include flanterm/src freestanding-c-headers/include nanoprintf
+DEPS_PATHS := limine-protocol/include flanterm/src freestanding-c-headers/include nanoprintf uacpi/include
 
 DEPS_INCLUDES := $(addprefix -I deps/,$(DEPS_PATHS))
 
@@ -22,17 +22,18 @@ CFLAGS := \
 	-target x86_64-unknown-none-elf -m64 -march=x86-64 -mabi=sysv -mno-80387 -mno-mmx -mno-sse -mno-sse2 -mno-red-zone -mcmodel=kernel \
 	-I src $(DEPS_INCLUDES) -MMD -MP \
     -ffunction-sections \
-    -fdata-sections
+    -fdata-sections \
+	-I src/acpi/uacpi_overrides -DUACPI_OVERRIDE_CONFIG=1
 LDFLAGS := \
 	-m elf_x86_64 -T linker.ld \
 	-nostdlib -static -z max-page-size=0x1000
 
-QEMU_FLAGS := -m 2G --no-reboot --no-shutdown -serial stdio -device VGA,xres=1280,yres=720
+QEMU_FLAGS := -m 2G --no-reboot --no-shutdown -serial stdio -device VGA,xres=1280,yres=720 -smp 8
 
 OUTPUT_BIN := $(OUTPUT).bin
 OUTPUT_ISO := $(OUTPUT).iso
 
-CSRC := $(shell find src deps/cc-runtime/src deps/flanterm/src -type f -name '*.c')
+CSRC := $(shell find src deps/cc-runtime/src deps/flanterm/src deps/uacpi/source -type f -name '*.c')
 ASMSRC := $(shell find src -type f -name '*.asm')
 COBJ := $(addprefix build/,$(addsuffix .o,$(CSRC)))
 ASMOBJ := $(addprefix build/,$(addsuffix .o,$(ASMSRC)))

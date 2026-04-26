@@ -1,6 +1,7 @@
 #include "limine_data.h"
 
 #include "drv/term.h"
+#include "mem/virt.h"
 #include "util.h"
 
 #define LIMINE_SECTION(suffix) __attribute__((used, section(".limine_requests" suffix))) static volatile
@@ -62,18 +63,25 @@ LIMINE_REQUEST struct limine_executable_address_request executable_address_reque
     .revision = 0,
 };
 
+LIMINE_REQUEST struct limine_rsdp_request rsdp_request = {
+    .id = LIMINE_RSDP_REQUEST_ID,
+    .revision = 0,
+};
+
 LIMINE_SECTION("_end") uint64_t limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
 
+static void *s_limine_data_rsdp_phys = NULL;
+
 bool limine_data_bare_minimum_present(void) {
-    if (LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision) == false) {
+    if (unlikely(LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision) == false)) {
         return false;
     }
 
-    if (framebuffer_request.response == NULL || framebuffer_request.response->framebuffer_count < 1) {
+    if (unlikely(framebuffer_request.response == NULL || framebuffer_request.response->framebuffer_count < 1)) {
         return false;
     }
 
-    if (flanterm_request.response == NULL || flanterm_request.response->entry_count < 1) {
+    if (unlikely(flanterm_request.response == NULL || flanterm_request.response->entry_count < 1)) {
         return false;
     }
 
@@ -81,22 +89,22 @@ bool limine_data_bare_minimum_present(void) {
 }
 
 bool limine_data_wanted_responses_present(void) {
-    if (hhdm_request.response == NULL) {
+    if (unlikely(hhdm_request.response == NULL)) {
         kerror("Limine didn't provide a HHDM response..?\n");
         return false;
     }
 
-    if (memmap_request.response == NULL || memmap_request.response->entry_count < 1) {
+    if (unlikely(memmap_request.response == NULL || memmap_request.response->entry_count < 1)) {
         kerror("Limine didn't pass a memory map! :(\n");
         return false;
     }
 
-    if (paging_mode_request.response == NULL) {
+    if (unlikely(paging_mode_request.response == NULL)) {
         kerror("Limine didn't provide a paging mode response!\n");
         return false;
     }
 
-    if (module_request.response == NULL || module_request.response->module_count < 1) {
+    if (unlikely(module_request.response == NULL || module_request.response->module_count < 1)) {
         kerror("Limine didn't load any modules!\n");
         return false;
     } else {
@@ -107,8 +115,13 @@ bool limine_data_wanted_responses_present(void) {
         }
     }
 
-    if (executable_address_request.response == NULL) {
+    if (unlikely(executable_address_request.response == NULL)) {
         kerror("Limine didn't provide the executable addresses!\n");
+        return false;
+    }
+
+    if (unlikely(rsdp_request.response == NULL)) {
+        kerror("ACPI is unavailable! (RSDP response missing)\n");
         return false;
     }
 
@@ -141,4 +154,16 @@ struct limine_module_response *limine_data_get_module_response(void) {
 
 struct limine_executable_address_response *limine_data_get_executable_address_response(void) {
     return executable_address_request.response;
+}
+
+void *limine_data_get_rsdp_virt(void) {
+    return rsdp_request.response->address;
+}
+
+void *limine_data_get_rsdp_phys(void) {
+    if (s_limine_data_rsdp_phys == NULL) {
+        s_limine_data_rsdp_phys = (void *) virt_get_physical_address(NULL, (uint64_t) limine_data_get_rsdp_virt());
+    }
+
+    return s_limine_data_rsdp_phys;
 }

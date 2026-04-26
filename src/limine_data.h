@@ -18,5 +18,7 @@ struct limine_framebuffer_response *limine_data_get_framebuffer_response(void);
 struct limine_memmap_response *limine_data_get_memmap_response(void);
 struct limine_module_response *limine_data_get_module_response(void);
 struct limine_executable_address_response *limine_data_get_executable_address_response(void);
+void *limine_data_get_rsdp_virt(void);
+void *limine_data_get_rsdp_phys(void);
 
 #endif

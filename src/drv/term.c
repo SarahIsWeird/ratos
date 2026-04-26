@@ -21,6 +21,7 @@
 
 #include "drv/rs232.h"
 #include "limine_data.h"
+#include "util.h"
 
 #define TEXT_BUFFER_SIZE 4096
 
@@ -65,11 +66,13 @@ void term_init() {
 static const char *LOG_COLORS[] = {
     "7",
     "69",
+    "70",
     "221",
     "160",
 };
 
 static const char *LOG_LEVEL_NAMES[] = {
+    "trc",
     "dbg",
     "inf",
     "wrn",
@@ -77,12 +80,17 @@ static const char *LOG_LEVEL_NAMES[] = {
 };
 
 size_t s_print_log_head(int log_level, const char *file, int line) {
-    if (log_level < LL_DEBUG || log_level > LL_ERROR) {
+    if (unlikely(log_level < 0 || log_level > LL_ERROR)) {
         kerror("Invalid log level %d in %s:%d, rewriting to LL_ERROR.\n", log_level, file, line);
         log_level = LL_ERROR;
     }
 
-    return kprintf("[%s%s%s%s%s] [%s:%3d] ", ANSI_SGR_FG_COLOR, LOG_COLORS[log_level], ANSI_SGR_END, LOG_LEVEL_NAMES[log_level], ANSI_SGR_FG_COLOR_RESET, file, line);
+    size_t size = kprintf("[%s%s%s%s%s] [%s", ANSI_SGR_FG_COLOR, LOG_COLORS[log_level], ANSI_SGR_END, LOG_LEVEL_NAMES[log_level], ANSI_SGR_FG_COLOR_RESET, file);
+    if (line >= 0) {
+        size += kprintf(":%3d", line);
+    }
+    size += kprintf("] ");
+    return size;
 }
 
 static void s_putchar(int wide_c, void *ctx) {
@@ -113,6 +121,8 @@ size_t kprintf(const char *fmt, ...) {
 }
 
 size_t kvlog(int log_level, const char *file, int line, const char *fmt, va_list args) {
+    if (log_level < MIN_LOG_LEVEL) return 0;
+
     size_t size = s_print_log_head(log_level, file, line);
     size += kvprintf(fmt, args);
 

@@ -14,3 +14,6 @@
 [submodule "deps/nanoprintf"]
 	path = deps/nanoprintf
 	url = https://github.com/charlesnicholson/nanoprintf
+[submodule "deps/uacpi"]
+	path = deps/uacpi
+	url = https://github.com/uACPI/uACPI.git

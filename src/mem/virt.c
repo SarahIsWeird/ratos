@@ -7,6 +7,8 @@
 #include "string.h"
 #include "util.h"
 
+#define ENTRY_PHYS_ADDR_MASK 0x001ffffffffff000ull
+
 struct virt_ctx_t {
     uint64_t phys;
     uint64_t *virt;
@@ -35,7 +37,7 @@ static uint64_t *s_virt_get_top_level(virt_ctx_t *ctx) {
 }
 
 static uint64_t *s_virt_entry_ptr_to_table_ptr(uint64_t *entry) {
-    uint64_t table_phys = *entry & 0x001ffffffffff000ull;
+    uint64_t table_phys = *entry & ENTRY_PHYS_ADDR_MASK;
     return (uint64_t *) s_phys_to_virt(table_phys);
 }
 
@@ -45,7 +47,7 @@ static uint64_t *s_virt_get_entry_ptr(uint64_t *table, uint64_t index, bool crea
         if (!create_if_missing) return NULL;
 
         uint64_t phys = phys_alloc();
-        if (phys == 0) {
+        if (unlikely(phys == 0)) {
             print_stacktrace();
             kerror("Failed to allocate a paging structure!\n");
             hcf();
@@ -83,15 +85,15 @@ static uint64_t *s_virt_get_or_create_pte(virt_ctx_t *ctx, uint64_t addr, bool i
 
     uint64_t *pml4 = s_virt_get_top_level(ctx);
     uint64_t *pml4e = s_virt_get_entry_ptr(pml4, (addr >> VIRT_PML4_INDEX_OFFSET) & VIRT_INDEX_MASK, true, flags | VF_PD_WRITABLE);
-    if (!pml4e) return NULL;
+    if (unlikely(!pml4e)) return NULL;
 
     uint64_t *pdpt = s_virt_entry_ptr_to_table_ptr(pml4e);
     uint64_t *pdpte = s_virt_get_entry_ptr(pdpt, (addr >> VIRT_PDPT_INDEX_OFFSET) & VIRT_INDEX_MASK, true, flags | VF_PD_WRITABLE);
-    if (!pdpte) return NULL;
+    if (unlikely(!pdpte)) return NULL;
 
     uint64_t *pd = s_virt_entry_ptr_to_table_ptr(pdpte);
     uint64_t *pde = s_virt_get_entry_ptr(pd, (addr >> VIRT_PD_INDEX_OFFSET) & VIRT_INDEX_MASK, true, flags | VF_PD_WRITABLE);
-    if (!pde) return NULL;
+    if (unlikely(!pde)) return NULL;
 
     if (is_big_page) return pde;
     if (*pde & VF_PD_BIG_PAGE) return pde;
@@ -103,14 +105,14 @@ static uint64_t *s_virt_get_or_create_pte(virt_ctx_t *ctx, uint64_t addr, bool i
 static bool s_virt_is_address_mapped(virt_ctx_t *ctx, uint64_t addr) {
     uint64_t *entry = s_virt_get_pte(ctx, addr, false);
     if (entry == NULL) return false;
-    return *entry == 0;
+    return *entry != 0;
 }
 
 void virt_init(void) {
     s_virt_hhdm_offset = limine_data_hhdm_get_offset();
 
     uint64_t kernel_pdpt_phys = phys_alloc();
-    if (!kernel_pdpt_phys) {
+    if (unlikely(!kernel_pdpt_phys)) {
         kerror("Failed to allocate the kernel PDPT!\n");
         hcf();
     }
@@ -120,7 +122,6 @@ void virt_init(void) {
     ctx->phys = phys_alloc();
     ctx->virt = (uint64_t *) s_phys_to_virt(ctx->phys);
 
-    kinfo("adding hhdm...\n");
     struct limine_memmap_response *memmap = limine_data_get_memmap_response();
     for (size_t i = 0; i < memmap->entry_count; i++) {
         struct limine_memmap_entry *entry = memmap->entries[i];
@@ -138,12 +139,11 @@ void virt_init(void) {
     }
     struct limine_framebuffer *framebuffer = limine_data_get_framebuffer_response()->framebuffers[0];
     virt_map(ctx, (uint64_t) framebuffer->address - s_virt_hhdm_offset, (uint64_t) framebuffer->address, framebuffer->width * framebuffer->height * framebuffer->bpp / BITS_PER_BYTE, VF_PT_PRESENT | VF_PT_WRITABLE);
-    kinfo("hhdm done\n");
+    ktrace("Added HHDM map.\n");
 
-    kinfo("adding kernel map...\n");
     struct limine_executable_address_response *executable_address = limine_data_get_executable_address_response();
     virt_map(ctx, executable_address->physical_base, executable_address->virtual_base, (uint64_t) &kernel_end - (uint64_t) &kernel_start, VF_PT_PRESENT | VF_PT_WRITABLE);
-    kinfo("kernel map done\n");
+    ktrace("Added kernel map.\n");
 
     virt_ctx_use(ctx);
 }
@@ -151,7 +151,7 @@ void virt_init(void) {
 virt_ctx_t *virt_ctx_new(void) {
     virt_ctx_t *ctx = (virt_ctx_t *) virt_alloc(NULL, VIRT_PAGE_SIZE);
     ctx->phys = phys_alloc();
-    if (!ctx->phys) {
+    if (unlikely(!ctx->phys)) {
         kerror("Failed to allocate the PML4!\n");
         hcf();
     }
@@ -171,16 +171,16 @@ uint64_t virt_alloc(virt_ctx_t *ctx, size_t size) {
     for (size_t addr = s_virt_hhdm_offset + VIRT_PAGE_SIZE; addr < 0xffffffffffff0000ull; addr += VIRT_PAGE_SIZE) {
         bool found = true;
         for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
-            if (s_virt_is_address_mapped(ctx, addr + i)) {
+            if (likely(s_virt_is_address_mapped(ctx, addr + i))) {
                 found = false;
                 break;
             }
         }
 
-        if (found) {
+        if (unlikely(found)) {
             for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
                 uint64_t phys = phys_alloc();
-                if (!phys) {
+                if (unlikely(!phys)) {
                     kerror("Failed to allocate physical memory for a virt_alloc!\n");
                     hcf();
                 }
@@ -199,16 +199,16 @@ uint64_t virt_user_alloc(virt_ctx_t *ctx, size_t size) {
     for (size_t addr = 0x100000; addr < s_virt_hhdm_offset; addr += VIRT_PAGE_SIZE) {
         bool found = true;
         for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
-            if (s_virt_is_address_mapped(ctx, addr + i)) {
+            if (likely(s_virt_is_address_mapped(ctx, addr + i))) {
                 found = false;
                 break;
             }
         }
 
-        if (found) {
+        if (unlikely(found)) {
             for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
                 uint64_t phys = phys_alloc();
-                if (!phys) {
+                if (unlikely(!phys)) {
                     kerror("Failed to allocate physical memory for a virt_alloc!\n");
                     hcf();
                 }
@@ -231,8 +231,12 @@ void virt_map(virt_ctx_t *ctx, uint64_t phys_addr, uint64_t virt_addr, size_t si
     uint64_t step = is_big_page ? VIRT_PAGE_SIZE_BIG : VIRT_PAGE_SIZE;
 
     for (size_t i = 0; i < size; i += step) {
-        uint64_t *entry = s_virt_get_or_create_pte(ctx, virt_addr + i, false, is_big_page);
+        uint64_t curr_virt_addr = virt_addr + i;
+        uint64_t *entry = s_virt_get_or_create_pte(ctx, curr_virt_addr, false, is_big_page);
         *entry = (phys_addr + i) | flags;
+        if (ctx == NULL) {
+            __asm__ volatile("invlpg (%0)" :: "r" (curr_virt_addr));
+        }
     }
 }
 
@@ -248,9 +252,47 @@ void virt_map_user(virt_ctx_t *ctx, uint64_t phys_addr, uint64_t virt_addr, size
 
 void virt_unmap(virt_ctx_t *ctx, uint64_t addr, size_t size) {
     for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
-        uint64_t *entry = s_virt_get_pte(ctx, addr + i, false);
+        uint64_t curr_virt_addr = addr + i;
+        uint64_t *entry = s_virt_get_pte(ctx, curr_virt_addr, false);
         if (entry) {
             *entry = 0;
+            if (ctx == NULL) {
+                __asm__ volatile("invlpg (%0)" :: "r" (curr_virt_addr));
+            }
         }
     }
+}
+
+uint64_t virt_map_anywhere(virt_ctx_t *ctx, uint64_t phys_addr, size_t size, uint64_t flags) {
+    for (size_t addr = s_virt_hhdm_offset + VIRT_PAGE_SIZE; addr < 0xffffffffffff0000ull; addr += VIRT_PAGE_SIZE) {
+        bool found = true;
+        for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
+            if (s_virt_is_address_mapped(ctx, addr + i)) {
+                found = false;
+                break;
+            }
+        }
+
+        if (found) {
+            for (size_t i = 0; i < size; i += VIRT_PAGE_SIZE) {
+                uint64_t curr_virt_addr = addr + i;
+                uint64_t *entry = s_virt_get_or_create_pte(ctx, curr_virt_addr, false, false);
+                *entry = (phys_addr + i) | flags;
+                if (ctx == NULL) {
+                    __asm__ volatile("invlpg (%0)" :: "r" (curr_virt_addr));
+                }
+            }
+
+            return addr;
+        }
+    }
+
+    return 0;
+}
+
+uint64_t virt_get_physical_address(virt_ctx_t *ctx, uint64_t virt_addr) {
+    uint64_t *entry = s_virt_get_pte(ctx, virt_addr, false);
+    if (entry == NULL) return 0;
+    if (!(*entry & VF_PT_PRESENT)) return 0;
+    return *entry & ENTRY_PHYS_ADDR_MASK;
 }

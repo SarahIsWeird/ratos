@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <limine.h>
 
+#include "acpi/acpi.h"
+#include "acpi/lapic.h"
 #include "cpuid.h"
 #include "debug/stacktrace.h"
 #include "drv/term.h"
@@ -38,11 +40,17 @@ void kmain(void) {
     phys_init();
     kinfo("phys inited\n");
 
-    kinfo("cpuid max leaf:          %08x\n", cpuid_eax(CPUID_MAX_LEAF_AND_VENDOR_ID, 0));
-    kinfo("cpuid max extended leaf: %08x\n", cpuid_eax(CPUID_MAX_EXTENDED_LEAF, 0));
+    kdebug("cpuid max leaf:          %08x\n", cpuid_eax(CPUID_MAX_LEAF_AND_VENDOR_ID, 0));
+    kdebug("cpuid max extended leaf: %08x\n", cpuid_eax(CPUID_MAX_EXTENDED_LEAF, 0));
 
     virt_init();
     kinfo("virt inited\n");
+
+    acpi_init();
+    kinfo("acpi inited\n");
+
+    lapic_init();
+    kinfo("lapic inited\n");
 
     while (1);
 

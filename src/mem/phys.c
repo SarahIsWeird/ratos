@@ -16,6 +16,7 @@ static size_t s_phys_addr_space_size;
 
 #define FULLY_USED (~0ull)
 
+#if EXTREMELY_VERBOSE_LOGGING
 static const char *memmap_type_names[] = {
     "usable",
     "reserved",
@@ -27,6 +28,7 @@ static const char *memmap_type_names[] = {
     "framebuffer",
     "reserved mapped",
 };
+#endif
 
 void phys_init(void) {
     s_phys_hhdm_offset = limine_data_hhdm_get_offset();
@@ -38,7 +40,9 @@ void phys_init(void) {
     struct limine_memmap_entry *last_entry = memmap_entries[memmap_entry_count - 1];
     s_phys_addr_space_size = last_entry->base + last_entry->length;
     s_phys_bitmap_size = ceildivu64(s_phys_addr_space_size, PHYS_PAGE_SIZE * BITS_PER_BYTE);
+#if EXTREMELY_VERBOSE_LOGGING
     kinfo("addr space size: %0p, bitmap size: %0p\n", s_phys_addr_space_size, s_phys_bitmap_size);
+#endif
 
     for (size_t i = 0; i < memmap_entry_count; i++) {
         struct limine_memmap_entry *entry = memmap_entries[i];
@@ -55,25 +59,28 @@ void phys_init(void) {
         }
     }
 
-    if (!s_phys_bitmap) {
+    if (unlikely(!s_phys_bitmap)) {
         kerror("Failed to find a memory region big enough to hold the physical memory map!\n");
         hcf();
     }
 
     memset(s_phys_bitmap, 0xff, s_phys_bitmap_size);
 
+#if EXTREMELY_VERBOSE_LOGGING
     kinfo("Physical memory regions:\n");
+#endif
     for (size_t i = 0; i < memmap_entry_count; i++) {
         struct limine_memmap_entry *entry = memmap_entries[i];
         if (entry->type == LIMINE_MEMMAP_USABLE) {
             phys_mark_region_unused(entry->base, entry->length);
         }
 
+#if EXTREMELY_VERBOSE_LOGGING
         kinfo("%0p - %0p (%s)\n", entry->base, entry->base + entry->length, memmap_type_names[entry->type]);
+#endif
     }
 
     phys_mark_region_used((uint64_t) s_phys_bitmap - s_phys_hhdm_offset, s_phys_bitmap_size * sizeof(uint64_t));
-
     phys_mark_used(0);
 }
 
@@ -104,7 +111,7 @@ uint64_t phys_alloc(void) {
 
         for (size_t bit = 0; bit < 64; bit++) {
             uint64_t mask = 1ull << bit;
-            if (entry & mask) continue;
+            if (likely(entry & mask)) continue;
 
             s_phys_bitmap[i] |= mask;
             return (i * 64ull + bit) * PHYS_PAGE_SIZE;
@@ -118,7 +125,7 @@ uint64_t phys_alloc_region(size_t length) {
     for (size_t addr = 0; addr < s_phys_addr_space_size;) {
         bool found = true;
         for (size_t i = 0; i < length; i += PHYS_PAGE_SIZE) {
-            if (s_phys_bitmap[PHYS_BITMAP_INDEX(addr + i)] & PHYS_BITMAP_MASK(addr + i)) {
+            if (likely(s_phys_bitmap[PHYS_BITMAP_INDEX(addr + i)] & PHYS_BITMAP_MASK(addr + i))) {
                 found = false;
                 addr += i + PHYS_PAGE_SIZE;
                 break;
